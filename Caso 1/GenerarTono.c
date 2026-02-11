@@ -24,13 +24,13 @@ typedef struct {
 #pragma pack(pop)
 
 /*
-ATENCIÓN: la función initSineTable está comentada. 
-Solo se incluye para presentar las operaciones usadas para calcular los valores de la tabla correspondiente. 
+ATENCIÓN: la función initSineTable está comentada.
+Solo se incluye para presentar las operaciones usadas para calcular los valores de la tabla correspondiente.
 static void initSineTable(void) {
     int i;
     for (i = 0; i < TABLE_SIZE; i++) {
         double angle = (2.0 * 3.141592653589793 * (double)i) / (double)TABLE_SIZE;
-        int v = (int)(32767.0 * sin(angle));   // Q15 
+        int v = (int)(32767.0 * sin(angle));   // Q15
         sineTable[i] = (short)v;
     }
 }
@@ -81,9 +81,9 @@ unsigned int freq_to_phaseStep(unsigned int freqHz) {
  * -----------------------------------------------------------------------------
  *  generate_tone
  * -----------------------------------------------------------------------------
- * 
+ *
  *  ATENCIÓN: esta es la función que debe pasar a ensamblador 80386.
- * 
+ *
  *  Rutina que genera una señal senoidal discreta y la almacena en un buffer
  *  de salida en formato PCM de 16 bits con signo.
  *
@@ -108,7 +108,7 @@ void generate_tone(short* out, int nSamples, unsigned int freqHz, short amp) {
     int temp;
     short sample;
     int i;
-    unsigned char index; 
+    unsigned char index;
 
 
     phaseStep = freq_to_phaseStep(freqHz);
@@ -124,7 +124,7 @@ void generate_tone(short* out, int nSamples, unsigned int freqHz, short amp) {
         temp = sineTable[index] * amp;
 
         /* Regresar a Q15 (desplazamiento aritmético porque temp es con signo) */
-        sample = (temp >> 15);  
+        sample = (temp >> 15);
         out[i] = sample;
 
         /* Avanzar fase (wrap natural en unsigned int) */
@@ -133,83 +133,87 @@ void generate_tone(short* out, int nSamples, unsigned int freqHz, short amp) {
 
 }
 
-// Funcion ASM
+// * Funcion ASM - Generación de tono senoidal con formato Better Comments
 __declspec(naked) void generate_tone_asm(short* out, int nSamples, unsigned int freqHz, short amp) {
     __asm {
-        // --- PROLOGO ---
-        // Para efectos de que sea más facil ver como seria en memoria y por estudio voy a asumir que ebp = esp = 53, y los parametros arriba de estos claramente
-        push ebp // Guardar ebp del llamador // esp = 4F, ebp = 53
-        mov ebp, esp // Establecer marco de pila // esp = 4F, ebp = 4F
-        sub esp, 20 // Reservamos 20 bytes de espacio para las variables locales // esp = 3B, ebp = 4F
 
-        // unsigned int phase [ebp - 4]
-        // unsigned int phaseStep [ebp - 8]
-        // int i [ebp - 12]
-        // int temp [ebp - 16]
-        // unsigned char index [ebp - 20] (se usa 4 bytes tmb por alineacion)
+        // * PRÓLOGO: Configuración del marco de pila (Stack Frame)
 
-        // --- PROGRAMA ---
+        push ebp                    // ! Guardar el Frame Pointer del llamador
+        mov  ebp, esp               // ! Establecer la base del nuevo marco
+        sub  esp, 20                // * Reservar 20 bytes para 5 variables locales
 
-        // Llamada a la función auxiliar freq_to_phaseStep
+        // ! MAPEO DE MEMORIA (Offsets de referencia)
+        // * Parametros de función (desde el marco de pila):
+            // * [ebp + 8]  : out (Puntero)
+            // * [ebp + 12] : nSamples (int)
+            // * [ebp + 16] : freqHz (unsigned int)     
+            // * [ebp + 20] : amp (short)        
+                     
+        // * Variables locales (en el marco de pila):
+            // * [ebp - 4]  : phase (unsigned int)
+            // * [ebp - 8]  : phaseStep (unsigned int)
+            // * [ebp - 12] : i (int)
+            // * [ebp - 16] : temp (int)
+            // * [ebp - 20] : index (unsigned char)
 
-        push dword ptr [ebp+16] // Mandamos una copia de freqHz al tope de la pila para que la función la pueda usar como parametro, entonces estaria en 37.
-        call freq_to_phaseStep  // El retorno de la funcion queda en eax.
-        add esp, 4  // Devuelvo al pana esp a donde estaba originalmente (3B) antes de haber corrido la funcion auxiliar
-        mov [ebp-8], eax // Guardamos el resultado de la funcion auxiliar a phaseStep
+        // * FASE 1: Cálculo de phaseStep
 
-        // Inicializar i y la otra vaina 
-        mov dword ptr [ebp - 12], 0 // i = 0
-        mov dword ptr [ebp - 4], 0 // phase = 0
-        
-        // Hay que comparar i con n samples, voy a mandar a i a un regsitro
-        // y compara con el valor en memoria de nSamples
+        push dword ptr [ebp + 16]   // * Argumento freqHz es empujado al final de la pila para que freq_to_phaseStep lo reciba correctamente como parametro
+        call freq_to_phaseStep      // ? Llamamos a la funcion freq_to_phaseStep(freqHz) y el resultado se devuelve en EAX
+        add  esp, 4                 // ! Limpiamos la pila del argumento pasado a la función
+        mov  [ebp - 8], eax         // * Pasamos el resultado de phaseStep a su variable local correspondiente
 
+        // * FASE 2: Inicialización
+
+        mov  dword ptr [ebp - 12], 0 // * Inicializar i = 0 en su variable local
+        mov  dword ptr [ebp - 4], 0  // * Inicializar phase = 0 en su variable local
+
+        // * FASE 3: Bucle Principal
 
         bucle:
-            mov eax, [ebp - 12] // eax = i
-            cmp eax, [ebp+12] // eax (i) - nSamples
-            jge fin_bucle // i >= nSamples indica chao bucle
+            // ? ¿i < nSamples?
+            mov  eax, [ebp - 12]    // * EAX = i 
+            cmp  eax, [ebp + 12]    // * Comparar i con nSamples
+            jge  fin_bucle          // ! Salimos del bucle si i >= nSamples
 
-            // --- LOGICA DE LA ONDA (index) ---
+            // * --- Cálculo del Índice ---
+            mov  eax, [ebp - 4]     // * EAX = phase
+            shr  eax, 24            // * index = phase >> 24
+            mov  [ebp - 20], eax    // * Guardar index en su variable local
 
-            mov eax, [ebp-4] ; eax = phase
-            shr eax, 24 ; eax >> 24
-            mov [ebp - 20], eax ; index (memoria) = eax
+            // * --- Multiplicación Q15 * Q15 (Amplitud) ---
+            mov  eax, [ebp - 20]    // * EAX = index (unsigned char, pero se trata como int para la multiplicación)
 
-            // --- LOGICA DE LA ONDA (temp) ---
+            // ! movsx: Importante para preservar el signo de los valores short
 
-            mov eax, [ebp - 20] // eax = index
-            movsx ecx, word ptr [sineTable + eax * 2] // ecx = Direccion de memoria del sineTable + indice * 2 porque cada short vale dos bytes
+            movsx ecx, word ptr [sineTable + eax * 2]   // * ECX = sineTable[index] (Q15, con signo)
+            movsx edx, word ptr [ebp + 20]              // * EDX = amp (Q15, con signo)
+            
+            imul  ecx, edx          // * ECX = temp (Resultado en Q30)
+            mov   [ebp - 16], ecx   // * Guardar temp en su variable local
 
-            // Arriba se uso movsx porque vamos a multiplicar por un entero abajo, y en caso de que fuera negativo el signo podia morirse si usabamos mov normal
-            // Abajo lo utilizamos tmb por si la amplitud es negativa
+            // * --- Escalamiento a Q15 y Escritura ---
+            mov  eax, [ebp - 16]    // * EAX = temp (Q30)
+            sar  eax, 15            // ! sar: Desplazamiento aritmético (preserva signo)
+            
+            mov  edx, [ebp + 8]         // * EDX = Puntero out
+            mov  ecx, [ebp - 12]        // * ECX = i
+            mov  [edx + ecx * 2], ax    // * out[i] = sample (16 bits)
 
-            movsx edx, word ptr [ebp + 20] // edx = amp (memoria)
-            imul ecx, edx // ecx = ecx * edx
-            mov [ebp - 16], ecx // temp (memoria) = ecx
+            // * --- Actualización de Fase e Iteración ---
+            mov  eax, [ebp - 8]         // * EAX = phaseStep     
+            add  [ebp - 4], eax         // * phase += phaseStep
+            
+            inc  dword ptr [ebp - 12]   // * i++
+            jmp  bucle                  // * Repetir el bucle para la siguiente muestra              
 
-            // -- LOGICA DE SAMPLE O ALGO ---
-            mov eax, [ebp - 16] // eax = temp
-            // El codigo de c dice que usar desplazamiento aritmetico entonces saaar
-            sar eax, 15
-            mov edx, [ebp + 8] // edx = out (puntero)
-            mov ecx, [ebp - 12] // ecx = i
-            mov [edx + ecx * 2], ax // [direccion donde apunta out + i * 2 bytes de los short] = eax
-
-            // Avanzar fase
-            mov eax, [ebp - 8]
-            add [ebp - 4], eax
-
-            // Despues de haber hecho todo lo que nos indican, i crece
-            inc dword ptr [ebp - 12] // i++
-            jmp bucle
-
+        // * EPÍLOGO: Restauración de Pila
 
         fin_bucle:
-            ; --- epilogo ---
-            mov esp, ebp
-            pop ebp
-            ret
+            mov  esp, ebp           // ! Descartar variables locales
+            pop  ebp                // ! Restaurar EBP del llamador
+            ret                     // * Volver a la dirección de retorno
     }
 }
 
@@ -306,6 +310,3 @@ int main(int argc, char* argv[]) {
     printf("Generado: %s (freq=%d Hz, dur=%d ms)\n", argv[3], freq, durMs);
     return 0;
 }
-
-
-
